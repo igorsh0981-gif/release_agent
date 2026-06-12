@@ -47,6 +47,8 @@ TELEGRAM_TOKEN = os.getenv(
 # Хранилище активных задач и очередей ответов BA
 # { chat_id: { task_id: asyncio.Queue } }
 active_tasks: Dict[int, Dict[str, asyncio.Queue]] = {}
+# { chat_id: task_id } — ожидает JSON файл
+pending_tasks: Dict[int, str] = {}
 # { chat_id: task_id } — текущая задача ожидающая ответа BA
 awaiting_ba_answer: Dict[int, str] = {}
 
@@ -66,9 +68,9 @@ async def handle_start_analysis(update: Update, context: ContextTypes.DEFAULT_TY
     task_id = args[0]
     logger.info(f"Получен /start_analysis | task_id: {task_id} | chat: {chat_id}")
 
-    # Сохраняем task_id — JSON придёт следующим сообщением
-    context.chat_data["pending_task_id"] = task_id
-    logger.info(f"Ожидаю JSON для task_id: {task_id}")
+    # Сохраняем в глобальный словарь (не chat_data — он не надёжен в личке)
+    pending_tasks[chat_id] = task_id
+    logger.info(f"Ожидаю JSON для task_id: {task_id} от chat: {chat_id}")
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -83,9 +85,10 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not doc or not doc.file_name or not doc.file_name.endswith(".json"):
         return
 
-    # Проверяем что ждём JSON для задачи
-    pending_task_id = context.chat_data.get("pending_task_id")
+    # Проверяем что ждём JSON для этого чата
+    pending_task_id = pending_tasks.get(chat_id)
     if not pending_task_id:
+        logger.warning(f"Получен JSON {doc.file_name} но нет pending task для chat {chat_id}")
         return
 
     if pending_task_id not in doc.file_name:
@@ -93,7 +96,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     # Сбрасываем ожидание
-    context.chat_data.pop("pending_task_id", None)
+    pending_tasks.pop(chat_id, None)
 
     # Скачиваем JSON
     try:
